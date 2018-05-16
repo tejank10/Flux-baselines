@@ -5,11 +5,11 @@ import Flux.params
 
 #Define custom policy for choosing action
 mutable struct CartPolePolicy <: Reinforce.AbstractPolicy
-    train::Bool
+  train::Bool
 
-    function CartPolePolicy(train = true)
-        new(train)
-    end
+  function CartPolePolicy(train = true)
+    new(train)
+  end
 end
 
 #Load game environment
@@ -54,19 +54,19 @@ fit_model(dataset) = Flux.train!(loss, dataset, opt)
 get_ϵ() = frames >= ϵ_STEPS ? ϵ_STOP : ϵ_START + frames * (ϵ_STOP - ϵ_START) / ϵ_STEPS
 
 function remember(state, action, reward, next_state, done)
-    if length(memory) == MEM_SIZE
-        deleteat!(memory, 1)
-    end
-    push!(memory, (state, action, reward, next_state, done))
+  if length(memory) == MEM_SIZE
+    deleteat!(memory, 1)
+  end
+  push!(memory, (state, action, reward, next_state, done))
 end
 
 function action(π::CartPolePolicy, reward, state, action)
-    if rand() <= get_ϵ() && π.train
-        return rand(1:ACTION_SIZE) - 1
-    end
+  if rand() <= get_ϵ() && π.train
+    return rand(1:ACTION_SIZE) - 1
+  end
 
-    act_values = model(state)
-    return Flux.argmax(act_values) - 1
+  act_values = model(state)
+  return Flux.argmax(act_values) - 1
 end
 
 function replay()
