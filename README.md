@@ -6,7 +6,7 @@ Implementations of reinforcement learning algorithms using Flux
 - OpenAIGym.jl
 
 ## Implemented Algorithms
--Deep Q Networks
+- Deep Q Networks
 
 ## TODO
 - Double DQN
