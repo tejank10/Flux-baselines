@@ -9,8 +9,8 @@ Implementations of reinforcement learning algorithms using Flux
 - Deep Q Networks
 - Double DQN
 - Dueling Double DQN
+- Prioritized Experience DQN
 
 ## TODO
-- Prioritized Experience DQN
 - A2C
 
