@@ -103,7 +103,7 @@ function replay()
   Flux.back!(cost)
   opt()
 
-  C += 1
+  C = (C + 1) % UPDATE_FREQ
 
   # update priority
   abs_error = abs_errors(q_curr, q_target).data
