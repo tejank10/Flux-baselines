@@ -35,7 +35,7 @@ UPDATE_FREQ = 10000
 ρ = 0.95    # Gradient momentum for RMSProp
 
 memory = [] #used to remember past results
-frames = 1
+frames = 0
 C = 0
 
 # ------------------------------ Model Architecture ----------------------------
@@ -93,12 +93,14 @@ function replay()
 end
 
 function episode!(env, π = RandomPolicy())
+  global frames
   ep = Episode(env, π)
 
   for (s, a, r, s′) in ep
     OpenAIGym.render(env)
     r = env.done ? -1 : r
     if π.train remember(s, a + 1, r, s′, env.done) end
+    frames += 1
   end
 
   ep.total_reward
