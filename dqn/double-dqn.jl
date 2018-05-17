@@ -95,12 +95,14 @@ function replay()
 end
 
 function episode!(env, π = RandomPolicy())
+  global frames
   ep = Episode(env, π)
 
   for (s, a, r, s′) in ep
     OpenAIGym.render(env)
     r = env.done ? -1 : r
     if π.train remember(s, a + 1, r, s′, env.done) end
+    frames += 1
   end
 
   ep.total_reward
