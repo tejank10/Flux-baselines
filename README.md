@@ -10,7 +10,8 @@ Implementations of reinforcement learning algorithms using Flux
 - Double DQN
 - Dueling Double DQN
 - Prioritized Experience DQN
+- A2C
 
 ## TODO
-- A2C
+- Deep Deterministic Policy Gradients
 
