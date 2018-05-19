@@ -18,7 +18,7 @@ end
 # ---------------------------- Parameters --------------------------------------
 
 STATE_SIZE = length(env.state)
-ACTION_SIZE = length(env.actions)
+ACTION_SPACE = 2 #length(env.actions)
 MEM_SIZE = 1000000
 BATCH_SIZE = 32
 REPLAY_START_SIZE = 50000
@@ -37,12 +37,6 @@ UPDATE_FREQ = 10000
 memory = [] #used to remember past results
 frames = 1
 C = 0
-
-
-timesteps = 0
-frames = 0
-
-memory = [] #used to remember past results
 
 # --------------------------- Model Architecture -------------------------------
 
@@ -146,7 +140,7 @@ while frames < ϵ_STEPS
   reset!(env)
   total_reward = episode!(env, CartPolePolicy())
   println("Episode: $e | Score: $total_reward")
-  if length(memory) >= REPLAY_START_SIZE
+  if frames >= REPLAY_START_SIZE
     replay()
   end
   e += 1
