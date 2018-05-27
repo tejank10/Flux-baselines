@@ -138,7 +138,7 @@ end
 e = 1
 while frames < ϵ_STEPS
   reset!(env)
-  total_reward = episode!(env, CartPolePolicy())
+  total_reward = episode!(env, PongPolicy())
   println("Episode: $e | Score: $total_reward")
   if frames >= REPLAY_START_SIZE
     replay()
@@ -151,7 +151,7 @@ ee = 1
 
 while true
   reset!(env)
-  total_reward = episode!(env, CartPolePolicy(false))
+  total_reward = episode!(env, PongPolicy(false))
   println("Episode: $ee | Score: $total_reward")
   ee += 1
 end
