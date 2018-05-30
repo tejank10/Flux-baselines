@@ -57,20 +57,20 @@ critic_target = deepcopy(critic)
 # ------------------------------- Param Update Functions---------------------------------
 
 function update_target!(target, model; τ = 0)
-  for i = 1:length(params(target))
-    for j = 1:length(params(target)[i].data)
-      params(target)[i].data[j] = τ * params(target)[i].data[j] +
-                                  (1 - τ) * params(model)[i].data[j]
-    end
+  for (p_t, p_m) in zip(params(target), params(model))
+    p_t.data .= τ * p_t.data .+ (1 - τ) * p_m.data
   end
 end
 
+function nullify_grad!(p)
+	if typeof(p) <: TrackedArray
+		p.grad .= 0.
+	end
+	return p
+end
+
 function zero_grad!(model)
-  for i = 1:length(params(model))
-    for j = 1:length(params(model)[i].data)
-      params(model)[i].grad[j] = 0.
-    end
-  end
+	model = mapleaves(nullify_grad!, model)
 end
 
 # ---------------------------------- Training ----------------------------------
