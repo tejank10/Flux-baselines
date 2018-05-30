@@ -123,7 +123,7 @@ function remember(state, action, reward, next_state, done)
   push!(memory, [state, action, reward, next_state, done])
 end
 
-# Choose action according to policy CartPolePolicy
+# Choose action according to policy PendulumPolicy
 function action(π::PendulumPolicy, reward, state, action)
   act_pred = actor(state) +  noise[frames] * π.train
   return clamp.(act_pred.data, -ACTION_BOUND, ACTION_BOUND) # returns action
