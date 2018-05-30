@@ -63,14 +63,14 @@ function update_target!(target, model; τ = 0)
 end
 
 function nullify_grad!(p)
-	if typeof(p) <: TrackedArray
-		p.grad .= 0.
-	end
-	return p
+  if typeof(p) <: TrackedArray
+    p.grad .= 0.
+  end
+  return p
 end
 
 function zero_grad!(model)
-	model = mapleaves(nullify_grad!, model)
+  model = mapleaves(nullify_grad!, model)
 end
 
 # ---------------------------------- Training ----------------------------------
