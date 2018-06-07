@@ -43,7 +43,7 @@ C = 0
 value = Dense(200, 1, relu)
 adv = Dense(200, ACTION_SPACE, relu)
 
-Q(x::TrackedArray) = broadcast(+, value(x), broadcast(+, adv(x), -mean(adv(x), 1)))
+Q(x::TrackedArray) = value(x) .+ adv(x) .- mean(adv(x), 1)
 
 model = Chain(Dense(STATE_SIZE, 200, relu), x -> Q(x))
 model_target = deepcopy(model)
