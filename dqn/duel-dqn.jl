@@ -1,4 +1,5 @@
 using Flux, CuArrays
+using BSON:@save
 using Flux:params
 using OpenAIGym
 import Reinforce:action
@@ -78,6 +79,16 @@ fit_model(data) = Flux.train!(huber_loss, data, model.opt)
 
 get_ϵ() = frames == ϵ_STEPS ? ϵ_STOP : ϵ_START + frames * (ϵ_STOP - ϵ_START) / ϵ_STEPS
 
+function save_model(model::nn)
+  base_wt = cpu.(Tracker.data.(params(model.base)))
+  val_wt = cpu.(Tracker.data.(params(model.val)))
+  adv_wt = cpu.(Tracker.data.(params(model.adv)))
+
+  @save "../models/duel_dqn_base" base_wt
+  @save "../models/duel_dqn_val" val_wt
+  @save "../models/duel_dqn_adv" adv_wt
+end
+
 function preprocess(I)
   #= preprocess 210x160x3 uint8 frame into 6400 (80x80) 1D float vector =#
   I = I[36:195, :, :] # crop
@@ -132,6 +143,7 @@ function replay()
     # Update target model
     if C == 0
       model_target = deepcopy(model)
+      save_model(model)
     end
 
     C = (C + 1) % UPDATE_FREQ
