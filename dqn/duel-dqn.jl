@@ -1,4 +1,4 @@
-using Flux
+using Flux, CuArrays
 using Flux:params
 using OpenAIGym
 import Reinforce:action
@@ -17,12 +17,12 @@ end
 
 # ---------------------------- Parameters --------------------------------------
 
-STATE_SIZE = length(env.state)
+STATE_SIZE = 6400 #length(env.state)
 ACTION_SPACE = 2 #length(env.actions)
 MEM_SIZE = 1000000
 BATCH_SIZE = 32
-REPLAY_START_SIZE = 50000
-UPDATE_FREQ = 10000
+REPLAY_START_SIZE = 5000
+UPDATE_FREQ = 500
 γ = 0.99    # discount rate
 
 # Exploration params
@@ -40,12 +40,12 @@ C = 0
 
 # --------------------------- Model Architecture -------------------------------
 
-value = Dense(200, 1, relu)
-adv = Dense(200, ACTION_SPACE, relu)
+value = Dense(200, 1, relu) |> gpu
+adv = Dense(200, ACTION_SPACE, relu) |> gpu
 
 Q(x::TrackedArray) = value(x) .+ adv(x) .- mean(adv(x), 1)
 
-model = Chain(Dense(STATE_SIZE, 200, relu), x -> Q(x))
+model = Chain(Dense(STATE_SIZE, 200, relu), x -> Q(x)) |> gpu
 model_target = deepcopy(model)
 
 huber_loss(x, y) = mean(sqrt.(1 + (model(x) - y) .^ 2) - 1)
@@ -75,10 +75,9 @@ function remember(prev_s, s, a, r, s′, done)
     deleteat!(memory, 1)
   end
 
-  state = preprocess(s) - prev_s
+  state = preprocess(s) - prev_s |> gpu
   next_state = env.done ? zeros(STATE_SIZE) : preprocess(s′)
-  next_state -= preprocess(s)
-  reward = σ(r)
+  next_state = next_state - preprocess(s) |> gpu
   push!(memory, (state, a, r, next_state, done))
 end
 
@@ -87,7 +86,7 @@ function action(π::PongPolicy, reward, state, action)
     return rand(1:ACTION_SPACE) + 1 # UP and DOWN action corresponds to 2 and 3
   end
 
-  s = preprocess(state) - π.prev_state
+  s = preprocess(state) - π.prev_state |> gpu
   act_values = model(s)
   return Flux.argmax(act_values) + 1  # returns action max Q-value
 end
@@ -107,7 +106,7 @@ function replay()
 
     target_f = model(state).data
     target_f[action] = target
-    dataset = zip(state, target_f)
+    dataset = zip(state, cu(target_f))
     fit_model(dataset)
 
     # Update target model
@@ -124,7 +123,7 @@ function episode!(env, π = RandomPolicy())
   ep = Episode(env, π)
 
   for (s, a, r, s′) in ep
-    OpenAIGym.render(env)
+    #OpenAIGym.render(env)
     if π.train remember(π.prev_state, s, a - 1, r, s′, env.done) end
     π.prev_state = preprocess(s)
     frames += 1
