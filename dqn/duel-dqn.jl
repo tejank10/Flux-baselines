@@ -2,6 +2,7 @@ using Flux, CuArrays
 using Flux:params
 using OpenAIGym
 import Reinforce:action
+import Base: deepcopy
 
 # ------------------------ Load game environment -------------------------------
 env = GymEnv("Pong-v0")
@@ -39,20 +40,39 @@ frames = 1
 C = 0
 
 # --------------------------- Model Architecture -------------------------------
+struct nn
+  base
+  value
+  adv
+  opt
 
+  function nn(base, value, adv)
+    all_params = vcat(params(base), params(value), params(adv))
+    opt =  RMSProp(all_params, η; ρ = ρ)
+    new(base, value, adv, opt)
+  end
+end
+
+function (m::nn)(inp)
+  Q(x::TrackedArray) = m.value(x) .+ m.adv(x) .- mean(m.adv(x), 1)
+  Q(m.base(inp))
+end
+
+function deepcopy(m::nn)
+  nn(deepcopy(m.base), deepcopy(m.value), deepcopy(m.adv))
+end
+
+base = Chain(Dense(STATE_SIZE, 200, relu)) |> gpu
 value = Dense(200, 1, relu) |> gpu
 adv = Dense(200, ACTION_SPACE, relu) |> gpu
 
-Q(x::TrackedArray) = value(x) .+ adv(x) .- mean(adv(x), 1)
+model = nn(base, value, adv)
 
-model = Chain(Dense(STATE_SIZE, 200, relu), x -> Q(x)) |> gpu
 model_target = deepcopy(model)
 
 huber_loss(x, y) = mean(sqrt.(1 + (model(x) - y) .^ 2) - 1)
 
-opt() = RMSProp(params(model), η; ρ = ρ)
-
-fit_model(data) = Flux.train!(huber_loss, data, opt)
+fit_model(data) = Flux.train!(huber_loss, data, model.opt)
 
 # ------------------------------- Helper Functions -----------------------------
 
