@@ -23,8 +23,8 @@ STATE_SIZE = 6400 #length(env.state)
 ACTION_SPACE = 2 #length(env.actions)
 MEM_SIZE = 1000000
 BATCH_SIZE = 32
-REPLAY_START_SIZE = 5000
-UPDATE_FREQ = 500
+REPLAY_START_SIZE = 50000
+UPDATE_FREQ = 1000
 γ = 0.99    # discount rate
 
 # Exploration params
@@ -81,12 +81,14 @@ get_ϵ() = frames == ϵ_STEPS ? ϵ_STOP : ϵ_START + frames * (ϵ_STOP - ϵ_STAR
 
 function save_model(model::nn)
   base_wt = cpu.(Tracker.data.(params(model.base)))
-  val_wt = cpu.(Tracker.data.(params(model.val)))
+  val_wt = cpu.(Tracker.data.(params(model.value)))
   adv_wt = cpu.(Tracker.data.(params(model.adv)))
 
   @save "../models/duel_dqn_base" base_wt
   @save "../models/duel_dqn_val" val_wt
   @save "../models/duel_dqn_adv" adv_wt
+  
+  println("Model saved")
 end
 
 function preprocess(I)
@@ -106,9 +108,9 @@ function remember(prev_s, s, a, r, s′, done)
     deleteat!(memory, 1)
   end
 
-  state = preprocess(s) - prev_s |> gpu
+  state = preprocess(s) - prev_s
   next_state = env.done ? zeros(STATE_SIZE) : preprocess(s′)
-  next_state = next_state - preprocess(s) |> gpu
+  next_state = next_state - preprocess(s)
   push!(memory, (state, a, r, next_state, done))
 end
 
@@ -131,13 +133,13 @@ function replay()
     target = reward
 
     if !done
-      a_max = Flux.argmax(model(next_state))
-      target += γ * model_target(next_state).data[a_max]
+      a_max = Flux.argmax(model(next_state |> gpu))
+      target += γ * model_target(next_state |> gpu).data[a_max]
     end
 
-    target_f = model(state).data
+    target_f = model(state |> gpu).data
     target_f[action] = target
-    dataset = zip(state, cu(target_f))
+    dataset = zip(cu(state), cu(target_f))
     fit_model(dataset)
 
     # Update target model
@@ -176,7 +178,7 @@ while frames < ϵ_STEPS
   end
   e += 1
 end
-
+#=
 # -------------------------------- Testing -------------------------------------
 ee = 1
 
@@ -185,4 +187,4 @@ while true
   total_reward = episode!(env, PongPolicy(false))
   println("Episode: $ee | Score: $total_reward")
   ee += 1
-end
+end=#
