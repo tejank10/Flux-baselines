@@ -22,15 +22,15 @@ end
 STATE_SIZE = 6400 #length(env.state)
 ACTION_SPACE = 2 #length(env.actions)
 MEM_SIZE = 1000000
-BATCH_SIZE = 32
+BATCH_SIZE = 64
 REPLAY_START_SIZE = 50000
-UPDATE_FREQ = 1000
+UPDATE_FREQ = 500
 γ = 0.99    # discount rate
 
 # Exploration params
 ϵ_START = 1.0   # Initial exploration rate
 ϵ_STOP = 0.1    # Final exploratin rate
-ϵ_STEPS = 1000000   # Final exploration frame, using linear annealing
+ϵ_STEPS = 10000   # Final exploration frame, using linear annealing
 
 # Optimiser params
 η = 2.5e-4   # Learning rate
@@ -77,7 +77,7 @@ fit_model(data) = Flux.train!(huber_loss, data, model.opt)
 
 # ------------------------------- Helper Functions -----------------------------
 
-get_ϵ() = frames == ϵ_STEPS ? ϵ_STOP : ϵ_START + frames * (ϵ_STOP - ϵ_START) / ϵ_STEPS
+get_ϵ() = steps == ϵ_STEPS ? ϵ_STOP : ϵ_START + steps * (ϵ_STOP - ϵ_START) / ϵ_STEPS
 
 function save_model(model::nn)
   base_wt = cpu.(Tracker.data.(params(model.base)))
@@ -111,6 +111,7 @@ function remember(prev_s, s, a, r, s′, done)
   state = preprocess(s) - prev_s
   next_state = env.done ? zeros(STATE_SIZE) : preprocess(s′)
   next_state = next_state - preprocess(s)
+  r = clamp(r, -1, 1)
   push!(memory, (state, a, r, next_state, done))
 end
 
@@ -148,17 +149,19 @@ function replay()
     #dataset = zip(cu(state), cu(target_f))
     #fit_model(dataset)
 
-    # Update target model
-    if C == 0
-      model_target = deepcopy(model)
-      save_model(model)
-    end
-
     C = (C + 1) % UPDATE_FREQ
+    i += 1
+  end
+  loss = huber_loss(cu(x), cu(y))
+  Flux.back!(loss)
+  model.opt()
+  # Update target model
+  if steps % UPDATE_FREQ == 0
+    model_target = deepcopy(model)
+    save_model(model)
   end
 
-  Flux.back!(huber_loss(cu(x), cu(y)))
-  model.opt()
+  return loss.tracker.data
 end
 
 function episode!(env, π = RandomPolicy())
@@ -178,13 +181,17 @@ end
 # ------------------------------ Training --------------------------------------
 
 e = 1
-while frames < ϵ_STEPS
+steps = 0
+while steps < ϵ_STEPS
   reset!(env)
   total_reward = episode!(env, PongPolicy())
-  println("Episode: $e | Score: $total_reward")
+  eps = get_ϵ()
+  loss = 0
   if frames >= REPLAY_START_SIZE
-    replay()
+    loss = replay()
+    steps += 1
   end
+  println("Episode: $e | Score: $total_reward | eps: $eps | loss: $loss | steps: $steps")
   e += 1
 end
 #=
