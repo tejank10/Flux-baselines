@@ -128,7 +128,9 @@ function replay()
   global C, model_target
 
   minibatch = sample(memory, BATCH_SIZE, replace = false)
-
+  x = zeros(STATE_SIZE, BATCH_SIZE)
+  y = zeros(ACTION_SPACE, BATCH_SIZE)
+  i = 1
   for (state, action, reward, next_state, done) in minibatch
     target = reward
 
@@ -139,8 +141,12 @@ function replay()
 
     target_f = model(state |> gpu).data
     target_f[action] = target
-    dataset = zip(cu(state), cu(target_f))
-    fit_model(dataset)
+
+    x[:, i] .= state
+    y[:, i] .= target_f
+
+    #dataset = zip(cu(state), cu(target_f))
+    #fit_model(dataset)
 
     # Update target model
     if C == 0
@@ -150,6 +156,9 @@ function replay()
 
     C = (C + 1) % UPDATE_FREQ
   end
+
+  Flux.back!(huber_loss(cu(x), cu(y)))
+  model.opt()
 end
 
 function episode!(env, π = RandomPolicy())
