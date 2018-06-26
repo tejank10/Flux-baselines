@@ -10,10 +10,14 @@ env = GymEnv("Pong-v0")
 
 # Custom Policy for Pong-v0
 mutable struct PongPolicy <: Reinforce.AbstractPolicy
-  prev_state
+  prev_states
+  prev_act
   train::Bool
   function PongPolicy(train = true)
-    new(zeros(STATE_SIZE), train)
+    prev_state = preprocess(env.state)
+    prev_states = cat(3, prev_state, prev_state, prev_state)
+    prev_states = reshape(prev_states, size(prev_states)..., 1)
+    new(prev_states, 2, train)
   end
 end
 
@@ -37,7 +41,7 @@ UPDATE_FREQ = 500
 ρ = 0.95    # Gradient momentum for RMSProp
 
 memory = [] #used to remember past results
-frames = 1
+frames = 0
 C = 0
 
 # --------------------------- Model Architecture -------------------------------
@@ -63,9 +67,11 @@ function deepcopy(m::nn)
   nn(deepcopy(m.base), deepcopy(m.value), deepcopy(m.adv))
 end
 
-base = Chain(Dense(STATE_SIZE, 200, relu)) |> gpu
-value = Dense(200, 1, relu) |> gpu
-adv = Dense(200, ACTION_SPACE, relu) |> gpu
+base = Chain(Conv((8,8), 4=>32, relu; stride=(4,4)),
+             Conv((4,4), 32=>64, relu; stride=(2,2)),
+             Conv((3,3), 64=>64, relu; stride=(1,1)), x->reshape(x, :, size(x, 4))) |> gpu
+value = Chain(Dense(6*6*64, 512, relu), Dense(512, 1)) |> gpu
+adv = Chain(Dense(6*6*64, 512, relu), Dense(512, ACTION_SPACE)) |> gpu
 
 model = nn(base, value, adv)
 
@@ -87,7 +93,7 @@ function save_model(model::nn)
   @save "../models/duel_dqn_base" base_wt
   @save "../models/duel_dqn_val" val_wt
   @save "../models/duel_dqn_adv" adv_wt
-  
+
   println("Model saved")
 end
 
@@ -99,7 +105,7 @@ function preprocess(I)
   I[I .== 109] = 0 # erase background (background type 2)
   I[I .!= 0] = 1 # everything else (paddles, ball) just set to 1
 
-  return I[:] #Flatten and return
+  return I#[:] #Flatten and return
 end
 
 # Putting data into replay buffer
@@ -108,28 +114,32 @@ function remember(prev_s, s, a, r, s′, done)
     deleteat!(memory, 1)
   end
 
-  state = preprocess(s) - prev_s
-  next_state = env.done ? zeros(STATE_SIZE) : preprocess(s′)
-  next_state = next_state - preprocess(s)
+  state = cat(3, preprocess(s), prev_s)
+  next_state = state[:,:,1:3,1]
+  next_state = cat(3, next_state, preprocess(s′))
+  next_state = reshape(next_state, size(next_state)..., 1)
   r = clamp(r, -1, 1)
   push!(memory, (state, a, r, next_state, done))
 end
 
 function action(π::PongPolicy, reward, state, action)
+  if frames % 4 != 0 return π.prev_act end
   if rand() <= get_ϵ() && π.train
-    return rand(1:ACTION_SPACE) + 1 # UP and DOWN action corresponds to 2 and 3
+    π.prev_act = rand(1:ACTION_SPACE) + 1
+    return π.prev_act # UP and DOWN action corresponds to 2 and 3
   end
 
-  s = preprocess(state) - π.prev_state |> gpu
+  s = cat(3, preprocess(state), π.prev_states) |> gpu
   act_values = model(s)
-  return Flux.argmax(act_values) + 1  # returns action max Q-value
+  π.prev_act = Flux.argmax(act_values) + 1
+  return π.prev_act  # returns action max Q-value
 end
 
 function replay()
   global C, model_target
 
   minibatch = sample(memory, BATCH_SIZE, replace = false)
-  x = zeros(STATE_SIZE, BATCH_SIZE)
+  x = zeros(80, 80, 4, BATCH_SIZE)
   y = zeros(ACTION_SPACE, BATCH_SIZE)
   i = 1
   for (state, action, reward, next_state, done) in minibatch
@@ -143,7 +153,7 @@ function replay()
     target_f = model(state |> gpu).data
     target_f[action] = target
 
-    x[:, i] .= state
+    x[:, :, :, i] .= state[:, :, :, 1]
     y[:, i] .= target_f
 
     #dataset = zip(cu(state), cu(target_f))
@@ -170,8 +180,8 @@ function episode!(env, π = RandomPolicy())
 
   for (s, a, r, s′) in ep
     #OpenAIGym.render(env)
-    if π.train remember(π.prev_state, s, a - 1, r, s′, env.done) end
-    π.prev_state = preprocess(s)
+    if π.train remember(π.prev_states, s, a - 1, r, s′, env.done) end
+    π.prev_states = cat(3, preprocess(s), π.prev_states[:,:,1:2,1])
     frames += 1
   end
 
