@@ -25,7 +25,7 @@ end
 
 STATE_SIZE = 6400 #length(env.state)
 ACTION_SPACE = 2 #length(env.actions)
-MEM_SIZE = 1000000
+MEM_SIZE = 500000
 BATCH_SIZE = 64
 REPLAY_START_SIZE = 50000
 UPDATE_FREQ = 500
@@ -104,7 +104,7 @@ function preprocess(I)
   I[I .== 144] = 0 # erase background (background type 1)
   I[I .== 109] = 0 # erase background (background type 2)
   I[I .!= 0] = 1 # everything else (paddles, ball) just set to 1
-
+  I = reshape(I, 80,80,1)
   return I#[:] #Flatten and return
 end
 
@@ -115,10 +115,10 @@ function remember(prev_s, s, a, r, s′, done)
   end
 
   state = cat(3, preprocess(s), prev_s)
+
   next_state = state[:,:,1:3,1]
-  next_state = cat(3, next_state, preprocess(s′))
+  next_state = cat(3, preprocess(s′), next_state)
   next_state = reshape(next_state, size(next_state)..., 1)
-  r = clamp(r, -1, 1)
   push!(memory, (state, a, r, next_state, done))
 end
 
@@ -131,7 +131,7 @@ function action(π::PongPolicy, reward, state, action)
 
   s = cat(3, preprocess(state), π.prev_states) |> gpu
   act_values = model(s)
-  π.prev_act = Flux.argmax(act_values) + 1
+  π.prev_act = Flux.argmax(act_values)[1] + 1
   return π.prev_act  # returns action max Q-value
 end
 
@@ -144,17 +144,15 @@ function replay()
   i = 1
   for (state, action, reward, next_state, done) in minibatch
     target = reward
-
     if !done
       a_max = Flux.argmax(model(next_state |> gpu))
-      target += γ * model_target(next_state |> gpu).data[a_max]
+      target += γ * model_target(next_state |> gpu).data[a_max][1]
     end
-
     target_f = model(state |> gpu).data
-    target_f[action] = target
+    target_f[action] = target |> gpu
 
     x[:, :, :, i] .= state[:, :, :, 1]
-    y[:, i] .= target_f
+    y[:, i] .= target_f[:, 1]
 
     #dataset = zip(cu(state), cu(target_f))
     #fit_model(dataset)
@@ -182,6 +180,7 @@ function episode!(env, π = RandomPolicy())
     #OpenAIGym.render(env)
     if π.train remember(π.prev_states, s, a - 1, r, s′, env.done) end
     π.prev_states = cat(3, preprocess(s), π.prev_states[:,:,1:2,1])
+    π.prev_states = reshape(π.prev_states, size(π.prev_states)..., 1)
     frames += 1
   end
 
