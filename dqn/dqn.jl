@@ -1,5 +1,6 @@
 using Flux
 using OpenAIGym
+using BSON: @save
 import Reinforce.action
 import Flux.params
 
@@ -122,6 +123,10 @@ while true
   e += 1
 end
 
+#---------------------------------- Saving -------------------------------------
+
+weights = Tracker.data.(params(model))
+@save "dqn-weights.bson" weights
 # -------------------------------- Testing -------------------------------------
 ee = 1
 
