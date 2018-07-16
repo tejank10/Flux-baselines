@@ -29,6 +29,7 @@ MEM_SIZE = 500000
 BATCH_SIZE = 64
 REPLAY_START_SIZE = 50000
 UPDATE_FREQ = 500
+MAX_TRAIN_STEPS = 50000
 γ = 0.99    # discount rate
 
 # Exploration params
@@ -83,7 +84,7 @@ fit_model(data) = Flux.train!(huber_loss, data, model.opt)
 
 # ------------------------------- Helper Functions -----------------------------
 
-get_ϵ() = steps == ϵ_STEPS ? ϵ_STOP : ϵ_START + steps * (ϵ_STOP - ϵ_START) / ϵ_STEPS
+get_ϵ() = steps > ϵ_STEPS ? ϵ_STOP : ϵ_START + steps * (ϵ_STOP - ϵ_START) / ϵ_STEPS
 
 function save_model(model::nn)
   base_wt = cpu.(Tracker.data.(params(model.base)))
@@ -191,7 +192,7 @@ end
 
 e = 1
 steps = 0
-while steps < ϵ_STEPS
+while steps < MAX_TRAIN_STEPS
   reset!(env)
   total_reward = episode!(env, PongPolicy())
   eps = get_ϵ()
