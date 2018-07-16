@@ -19,39 +19,32 @@ env = GymEnv("CartPole-v0")
 
 STATE_SIZE = length(env.state)
 ACTION_SIZE = length(env.actions)
-MEM_SIZE = 1000000
-BATCH_SIZE = 32
-REPLAY_START_SIZE = 50000
-UPDATE_FREQ = 10000
-γ = 0.99    # discount rate
+MEM_SIZE = 100000
+BATCH_SIZE = 64
+UPDATE_FREQ = 250 
+γ = 1.0f0    # discount rate
 
 # Exploration params
-ϵ_START = 1.0   # Initial exploration rate
-ϵ_STOP = 0.1    # Final exploratin rate
-ϵ_STEPS = 1000000   # Final exploration frame, using linear annealing
+ϵ = 1.0f0   # Initial exploration rate
+ϵ_MIN = 0.01f0    # Final exploratin rate
+ϵ_DECAY = 0.995f0
 
-# Optimiser params
-η = 2.5e-4   # Learning rate
-ρ = 0.95    # Gradient momentum for RMSProp
-
+η = 0.01f0
 memory = [] #used to remember past results
-frames = 1
 C = 0
 
 # ------------------------------ Model Architecture ----------------------------
 
-model = Chain(Dense(STATE_SIZE, 24, σ), Dense(24, 24, σ), Dense(24, ACTION_SIZE))
+model = Chain(Dense(STATE_SIZE, 24, tanh), Dense(24, 48, tanh), Dense(48, ACTION_SIZE)) |> gpu
 model_target = deepcopy(model)
 
 huber_loss(x, y) = mean(sqrt.(1 + (model(x) - y) .^ 2) - 1)
 
-opt = RMSProp(params(model), η; ρ = ρ)
-
-fit_model(dataset) = Flux.train!(loss, dataset, opt)
+opt = ADAM(params(model), η; decay = 0.01f0)
 
 # ----------------------------- Helper Functions -------------------------------
 
-get_ϵ() = frames >= ϵ_STEPS ? ϵ_STOP : ϵ_START + frames * (ϵ_STOP - ϵ_START) / ϵ_STEPS
+get_ϵ(e) = max(ϵ_MIN, min(ϵ, 1.0f0-log10(e * ϵ_DECAY)))
 
 function remember(state, action, reward, next_state, done)
   if length(memory) == MEM_SIZE
@@ -61,48 +54,53 @@ function remember(state, action, reward, next_state, done)
 end
 
 function action(π::CartPolePolicy, reward, state, action)
-  if rand() <= get_ϵ() && π.train
+  if rand() <= get_ϵ(e) && π.train
     return rand(1:ACTION_SIZE) - 1
   end
 
-  act_values = model(state)
+  act_values = model(state |> gpu)
   return Flux.argmax(act_values) - 1
 end
 
 function replay()
-  global model_target, C
-  minibatch = sample(memory, BATCH_SIZE, replace = false)
-
-  for (state, action, reward, next_state, done) in minibatch
+  global model_target, C, ϵ
+  batch_size = min(BATCH_SIZE, length(memory))
+  minibatch = sample(memory, batch_size, replace = false)
+  
+  x = Matrix{Float32}(STATE_SIZE, batch_size)
+  y = Matrix{Float32}(ACTION_SIZE, batch_size)
+  for (iter, (state, action, reward, next_state, done)) in enumerate(minibatch)
     target = reward
 
     if !done
-      a_max = Flux.argmax(model(next_state))
-      target += γ * model_target(next_state).data[a_max]
+      a_max = Flux.argmax(model(next_state |> gpu))
+      target += γ * model_target(next_state |> gpu).data[a_max]
     end
 
-    target_f = model(state).data
+    target_f = model(state |> gpu).data
     target_f[action] = target
-    dataset = zip(state, target_f)
-    fit_model(dataset)
-
-    if C == 0
-      model_target = deepcopy(model)
-    end
-
-    C = (C + 1) % UPDATE_FREQ
+    
+    x[:, iter] .= state
+    y[:, iter] .= target_f
   end
+
+  x = x |> gpu
+  y = y |> gpu
+  Flux.train!(huber_loss, [(x, y)], opt)
+
+  if C == 0
+    model_target = deepcopy(model)
+  end
+
+  C = (C + 1) % UPDATE_FREQ  
+  ϵ *= ϵ > ϵ_MIN ? ϵ_DECAY : 1.0f0
 end
 
 function episode!(env, π = RandomPolicy())
-  global frames
   ep = Episode(env, π)
 
   for (s, a, r, s′) in ep
-    OpenAIGym.render(env)
-    r = env.done ? -1 : r
     if π.train remember(s, a + 1, r, s′, env.done) end
-    frames += 1
   end
 
   ep.total_reward
@@ -111,13 +109,22 @@ end
 # ------------------------------ Training --------------------------------------
 
 e = 1
-while frames < ϵ_STEPS
+scores = []
+while true
   reset!(env)
   total_reward = episode!(env, CartPolePolicy())
-  println("Episode: $e | Score: $total_reward")
-  if length(memory) >= REPLAY_START_SIZE
-    replay()
+  push!(scores, total_reward)
+  print("Episode: $e | Score: $total_reward | ")
+  if e > 100
+    last_100_mean = mean(scores[end-99:end])
+    print("Last 100 episodes mean score: $last_100_mean")
+    if last_100_mean > 195
+      println("\nCartPole-v0 solved!")
+      break
+    end
   end
+  println()
+  replay()
   e += 1
 end
 
