@@ -2,7 +2,7 @@ import LearnBase.update! # importing for redefinition
 
 mutable struct SumTree
   capacity::Int
-  tree::Array{Float64, 1}
+  tree::Array{Float32, 1}
   data::Array{Any, 2}
   data_pointer::Int
 
