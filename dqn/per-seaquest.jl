@@ -1,11 +1,11 @@
 include("utils/memory.jl")
 
-using Flux
+using Flux, Images
 using Flux:params
 using OpenAIGym
 import Reinforce:action
 import Flux.params
-
+using CuArrays
 # -------------------------------- Constants -----------------------------------
 IMG_H = 84
 IMG_W = 84
@@ -31,7 +31,7 @@ end
 function preprocess(img)
   rgb = imresize(img, IMG_W, IMG_H)
 
-  r, g, b = rgb[:,:,0], rgb[:,:,1], rgb[:,:,2]
+  r, g, b = rgb[:,:,1], rgb[:,:,2], rgb[:,:,3]
   gray = 0.2989 * r + 0.5870 * g + 0.1140 * b     # extract luminance
 
   o = Float32.(gray) / 128 - 1    # normalize
@@ -39,9 +39,9 @@ end
 
 # ------------------------------ Parameters ------------------------------------
 
-STATE_SIZE = prod(IMG_W, IMG_H, IMG_C)
+STATE_SIZE = IMG_W * IMG_H * IMG_C
 ACTION_SIZE = length(env.actions)
-MEM_SIZE = 200000
+MEM_SIZE = 10
 BATCH_SIZE = 32
 UPDATE_FREQ = 10000
 γ = 0.99f0    # discount rate
@@ -49,10 +49,10 @@ UPDATE_FREQ = 10000
 EMPTY_STATE = zeros(Float32, IMG_W, IMG_H, IMG_C)
 
 # Exploration params
-ϵ_MAX = 1.0f0   # Initial exploration rate
-ϵ_MIN = 0.01f0    # Final exploratin rate
+ϵ_MAX = 1.0   # Initial exploration rate
+ϵ_MIN = 0.01    # Final exploratin rate
 MAX_ϵ_STEPS = 500000   # Final exploration frame, using linear annealing
-λ = -log(0.01f0) / MAX_ϵ_STEPS
+λ = -log(0.01) / MAX_ϵ_STEPS
 
 # Optimiser params
 η = 0.00025f0   # Learning rate
@@ -73,12 +73,16 @@ target_model = deepcopy(model)
 # Huber Loss
 function huber_loss(ŷ, y, ISWeights)
   err = y .- ŷ
-  cond = abs.(err) .< HUBER_LOSS_δ
+  cond_ = abs.(err) .< HUBER_LOSS_δ
+
   L2 = 0.5f0 * err .^ 2
   L1 = HUBER_LOSS_δ * (abs.(err) - 0.5f0 * HUBER_LOSS_δ)
-
-  loss = cond .* L2 + ~cond .* L1
-  mean(loss .* ISWeights)
+  loss = cond_ .* L2 
+  aa = .!cond_
+  bb=aa.*L1
+  loss += bb
+  #ISW = reshape(ISWeights, 1, length(ISWeights))
+  mean(loss)# .* ISW)
 end
 
 #Absolute Error (Used for SumTree)
@@ -92,16 +96,18 @@ opt = RMSProp(params(model), η)
 get_ϵ() = ϵ_MIN + (ϵ_MAX - ϵ_MIN) * exp(-λ * frames)
 
 function remember(prev_s, state, action, reward, next_state, done)
-  state = cat(3, preprocess(s), prev_s)
+  global frames
+  state = cat(3, preprocess(state), prev_s)
 
-  next_state = state[:,:,1:3,1]
-  if done s′ = zeros(s′) end
-  next_state = cat(3, preprocess(s′), next_state)
-  next_state = reshape(next_state, size(next_state)..., 1)
+  state_ = state[:,:,1:1,1]
+  if done next_state = zeros(next_state) end
+  state_ = cat(3, preprocess(next_state), state_)
+  state_ = reshape(state_, size(state_)..., 1)
 
-  transition = vcat(vec(state), [action, reward], vec(next_state))
+  transition = vcat(vec(state), [action, reward], vec(state_))
 
   store!(memory, transition)
+  frames += 1
 end
 
 function action(π::SeaquestPolicy, reward, state, action)
@@ -127,8 +133,8 @@ function replay()
   next_states = batch_memory[end - STATE_SIZE + 1:end, :]
   next_states = reshape(next_states, IMG_W, IMG_H, IMG_C, :)
 
-  q_target_next, q_next = target_model(next_states), model(next_states)
-                 q_curr = model(states)
+  q_target_next, q_next = target_model(next_states |> gpu), model(next_states |> gpu)
+                 q_curr = model(states |> gpu)
 
   q_target = q_curr.data
   eval_act_index = Int32.(batch_memory[STATE_SIZE + 1, :])
@@ -136,7 +142,7 @@ function replay()
 
   for i = 1:BATCH_SIZE
     q_target[eval_act_index[i], i] = reward[i]
-    next_state = next_states[:,:,:,i1:2]
+    next_state = next_states[:,:,:,i]
     if !all(next_state .== EMPTY_STATE)
       a_max = Flux.argmax(q_next[:, i])
       q_target[eval_act_index[i], i] += γ * q_target_next[:, i].data[a_max]
@@ -167,7 +173,7 @@ function episode!(env, π = RandomPolicy())
     if frames >= MEM_SIZE
       replay()
     end
-
+    
     π.prev_state = preprocess(s)
     π.prev_state = reshape(π.prev_state, size(π.prev_state)..., 1)
   end
@@ -183,12 +189,12 @@ while true
   reset!(env)
   total_reward = episode!(env, SeaquestPolicy())
   push!(scores, total_reward)
+  ϵ = get_ϵ()
   print("Episode: $e | Score: $total_reward | $ϵ | ")
   if e > 100
     last_100_mean = mean(scores[end-99:end])
     print("Last 100 scores mean: $last_100_mean")
-    if last_100_mean >= 195
-      println("CartPole-v0 Solved!")
+    if last_100_mean >= 500
       break
     end
   end
@@ -201,6 +207,7 @@ ee = 1
 
 while true
   reset!(env)
+  print("1")
   total_reward = episode!(env, SeaquestPolicy(false))
   println("Episode: $ee | Score: $total_reward")
   ee += 1
