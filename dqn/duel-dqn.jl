@@ -4,7 +4,7 @@ using Flux:params
 using OpenAIGym
 import Reinforce:action
 import Base: deepcopy
-
+ENV["CUDA_VISIBLE_DEVICES"] = 4
 # ------------------------ Load game environment -------------------------------
 env = GymEnv("Pong-v0")
 
@@ -24,22 +24,22 @@ end
 # ---------------------------- Parameters --------------------------------------
 
 STATE_SIZE = 6400 #length(env.state)
-ACTION_SPACE = 2 #length(env.actions)
-MEM_SIZE = 500000
-BATCH_SIZE = 64
-REPLAY_START_SIZE = 50000
-UPDATE_FREQ = 500
+ACTION_SPACE = 3 #length(env.actions)
+MEM_SIZE = 100000
+BATCH_SIZE = 32
+REPLAY_START_SIZE = 10000
+UPDATE_FREQ = 1000
 MAX_TRAIN_STEPS = 50000
-γ = 0.99    # discount rate
+γ = 0.99f0    # discount rate
 
 # Exploration params
 ϵ_START = 1.0   # Initial exploration rate
-ϵ_STOP = 0.1    # Final exploratin rate
-ϵ_STEPS = 10000   # Final exploration frame, using linear annealing
+ϵ_STOP = 0.02    # Final exploratin rate
+ϵ_STEPS = 100000   # Final exploration frame, using linear annealing
 
 # Optimiser params
-η = 2.5e-4   # Learning rate
-ρ = 0.95    # Gradient momentum for RMSProp
+η = 0.0001f0   # Learning rate
+ρ = 0.95f0    # Gradient momentum for RMSProp
 
 memory = [] #used to remember past results
 frames = 0
@@ -54,7 +54,7 @@ struct nn
 
   function nn(base, value, adv)
     all_params = vcat(params(base), params(value), params(adv))
-    opt =  RMSProp(all_params, η; ρ = ρ)
+    opt = ADAM(all_params, η)
     new(base, value, adv, opt)
   end
 end
@@ -84,7 +84,7 @@ fit_model(data) = Flux.train!(huber_loss, data, model.opt)
 
 # ------------------------------- Helper Functions -----------------------------
 
-get_ϵ() = steps > ϵ_STEPS ? ϵ_STOP : ϵ_START + steps * (ϵ_STOP - ϵ_START) / ϵ_STEPS
+get_ϵ() = frames > ϵ_STEPS ? ϵ_STOP : ϵ_START + frames * (ϵ_STOP - ϵ_START) / ϵ_STEPS
 
 function save_model(model::nn)
   base_wt = cpu.(Tracker.data.(params(model.base)))
@@ -105,7 +105,7 @@ function preprocess(I)
   I[I .== 144] = 0 # erase background (background type 1)
   I[I .== 109] = 0 # erase background (background type 2)
   I[I .!= 0] = 1 # everything else (paddles, ball) just set to 1
-  I = reshape(I, 80,80,1)
+  I = Float32.(reshape(I, 80,80,1))
   return I#[:] #Flatten and return
 end
 
@@ -114,7 +114,7 @@ function remember(prev_s, s, a, r, s′, done)
   if length(memory) == MEM_SIZE
     deleteat!(memory, 1)
   end
-
+  r = Float32(r)
   state = cat(3, preprocess(s), prev_s)
 
   next_state = state[:,:,1:3,1]
@@ -124,15 +124,16 @@ function remember(prev_s, s, a, r, s′, done)
 end
 
 function action(π::PongPolicy, reward, state, action)
-  if frames % 4 != 0 return π.prev_act end
+  #if frames % 4 != 0 return π.prev_act end
   if rand() <= get_ϵ() && π.train
-    π.prev_act = rand(1:ACTION_SPACE) + 1
+    π.prev_act = rand(1:ACTION_SPACE) 
     return π.prev_act # UP and DOWN action corresponds to 2 and 3
   end
 
   s = cat(3, preprocess(state), π.prev_states) |> gpu
   act_values = model(s)
-  π.prev_act = Flux.argmax(act_values)[1] + 1
+  π.prev_act = Flux.argmax(act_values)[1]
+  
   return π.prev_act  # returns action max Q-value
 end
 
@@ -146,11 +147,11 @@ function replay()
   for (state, action, reward, next_state, done) in minibatch
     target = reward
     if !done
-      a_max = Flux.argmax(model(next_state |> gpu))
-      target += γ * model_target(next_state |> gpu).data[a_max][1]
+      a_max = Flux.argmax(model(next_state |> gpu))[1]
+      target += γ * model_target(next_state |> gpu).data[a_max]
     end
     target_f = model(state |> gpu).data
-    target_f[action] = target |> gpu
+    target_f[action] = target
 
     x[:, :, :, i] .= state[:, :, :, 1]
     y[:, i] .= target_f[:, 1]
@@ -170,21 +171,24 @@ function replay()
     save_model(model)
   end
 
-  return loss.tracker.data
+  return loss.data
 end
 
 function episode!(env, π = RandomPolicy())
-  global frames
+  global frames, steps
   ep = Episode(env, π)
-
   for (s, a, r, s′) in ep
     #OpenAIGym.render(env)
-    if π.train remember(π.prev_states, s, a - 1, r, s′, env.done) end
+    if π.train remember(π.prev_states, s, a, r, s′, r == -1) end
     π.prev_states = cat(3, preprocess(s), π.prev_states[:,:,1:2,1])
     π.prev_states = reshape(π.prev_states, size(π.prev_states)..., 1)
     frames += 1
+    if frames >= REPLAY_START_SIZE
+      replay()
+      steps += 1
+    end
+    
   end
-
   ep.total_reward
 end
 
@@ -192,16 +196,16 @@ end
 
 e = 1
 steps = 0
-while steps < MAX_TRAIN_STEPS
+scores = zeros(100)
+idx = 1
+while true
   reset!(env)
   total_reward = episode!(env, PongPolicy())
+  scores[idx] = total_reward
+  idx = idx % 100 + 1
   eps = get_ϵ()
-  loss = 0
-  if frames >= REPLAY_START_SIZE
-    loss = replay()
-    steps += 1
-  end
-  println("Episode: $e | Score: $total_reward | eps: $eps | loss: $loss | steps: $steps")
+  avg_score = mean(scores)
+  println("Episode: $e | Score: $total_reward | eps: $eps | steps: $steps | Avg Score: $avg_score")
   e += 1
 end
 #=
