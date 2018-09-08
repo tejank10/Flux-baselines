@@ -1,6 +1,6 @@
 # Flux Baselines
 Implementations of reinforcement learning algorithms using Flux
-
+NOTE: The code works on Julia 0.6.x. Upgrade to 1.0 will be released soon.
 ## Dependencies
 - [Flux.jl](https://www.github.com/FluxML/Flux.jl)
 - [OpenAIGym.jl](https://github.com/JuliaML/OpenAIGym.jl)
