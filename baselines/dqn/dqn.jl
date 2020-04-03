@@ -3,6 +3,7 @@ using OpenAIGym
 using BSON: @save
 import Reinforce.action
 import Flux.params
+using Flux.Optimise: Optimiser
 
 #Define custom policy for choosing action
 mutable struct CartPolePolicy <: Reinforce.AbstractPolicy
@@ -40,7 +41,7 @@ model = Chain(Dense(STATE_SIZE, 24, tanh), Dense(24, 48, tanh), Dense(48, ACTION
 
 loss(x, y) = Flux.mse(model(x), y)
 
-opt = ADAM(params(model), η; decay = 0.01f0)
+opt = Optimiser(ADAM(η), InvDecay(0.01f0))
 
 # ----------------------------- Helper Functions -------------------------------
 
@@ -66,25 +67,25 @@ function replay()
   global ϵ
   batch_size = min(BATCH_SIZE, length(memory))
   minibatch = sample(memory, batch_size, replace = false)
-  
-  x = Matrix{Float32}(STATE_SIZE, batch_size)
-  y = Matrix{Float32}(ACTION_SIZE, batch_size)
+
+  x = Matrix{Float32}(undef, STATE_SIZE, batch_size)
+  y = Matrix{Float32}(undef, ACTION_SIZE, batch_size)
   for (iter, (state, action, reward, next_state, done)) in enumerate(minibatch)
     target = reward
     if !done
-      target += γ * maximum(model(next_state |> gpu).data)
+      target += γ * maximum(model(next_state |> gpu))
     end
 
-    target_f = model(state |> gpu).data
+    target_f = model(state |> gpu)
     target_f[action] = target
-    
+
     x[:, iter] .= state
     y[:, iter] .= target_f
   end
   x = x |> gpu
   y = y |> gpu
-  
-  Flux.train!(loss, [(x, y)], opt)
+
+  Flux.train!(loss, params(model), [(x, y)], opt)
 
   ϵ *= ϵ > ϵ_MIN ? ϵ_DECAY : 1.0f0
 end
@@ -94,16 +95,16 @@ function episode!(env, π = RandomPolicy())
 
   for (s, a, r, s′) in ep
     #OpenAIGym.render(env)
-    if π.train remember(s, a + 1, r, s′, env.done) end
+    if π.train
+      remember(s, a + 1, r, s′, env.done)
+    end
   end
 
   ep.total_reward
 end
-
 # ------------------------------ Training --------------------------------------
-
-e = 1
-scores = []
+global e = 1
+global scores = []
 
 while true
   reset!(env)
@@ -111,7 +112,7 @@ while true
   push!(scores, total_reward)
   print("Episode: $e | Score: $total_reward ")
   if e > 100
-    last_100_mean = mean(scores[end-99:end])
+    last_100_mean = mean(scores[(end - 99):end])
     print("Last 100 episodes mean score: $last_100_mean")
     if last_100_mean > 195
       println("\nCartPole-v0 solved!")
@@ -120,19 +121,17 @@ while true
   end
   println()
   replay()
-  e += 1
+  global e += 1
 end
-
 #---------------------------------- Saving -------------------------------------
-
 weights = Tracker.data.(params(model))
 @save "dqn-weights.bson" weights
 # -------------------------------- Testing -------------------------------------
-ee = 1
+global ee = 1
 
 while true
   reset!(env)
   total_reward = episode!(env, CartPolePolicy(false))
   println("Episode: $ee | Score: $total_reward")
-  ee += 1
+  global ee += 1
 end
