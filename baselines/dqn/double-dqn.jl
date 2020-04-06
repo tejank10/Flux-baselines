@@ -2,6 +2,7 @@ using Flux
 using OpenAIGym
 import Reinforce.action
 import Flux.params
+using Flux.Optimise: Optimiser
 
 #Define custom policy for choosing action
 mutable struct CartPolePolicy <: Reinforce.AbstractPolicy
@@ -21,7 +22,7 @@ STATE_SIZE = length(env.state)
 ACTION_SIZE = length(env.actions)
 MEM_SIZE = 100000
 BATCH_SIZE = 64
-UPDATE_FREQ = 250 
+UPDATE_FREQ = 250
 γ = 1.0f0    # discount rate
 
 # Exploration params
@@ -38,9 +39,9 @@ C = 0
 model = Chain(Dense(STATE_SIZE, 24, tanh), Dense(24, 48, tanh), Dense(48, ACTION_SIZE)) |> gpu
 model_target = deepcopy(model)
 
-huber_loss(x, y) = mean(sqrt.(1 + (model(x) - y) .^ 2) - 1)
+huber_loss(x, y) = mean(sqrt.(1 .+ (model(x) .- y) .^ 2) .- 1)
 
-opt = ADAM(params(model), η; decay = 0.01f0)
+opt = Optimiser(ADAM(η), InvDecay(0.01f0))
 
 # ----------------------------- Helper Functions -------------------------------
 
@@ -66,33 +67,33 @@ function replay()
   global model_target, C, ϵ
   batch_size = min(BATCH_SIZE, length(memory))
   minibatch = sample(memory, batch_size, replace = false)
-  
-  x = Matrix{Float32}(STATE_SIZE, batch_size)
-  y = Matrix{Float32}(ACTION_SIZE, batch_size)
+
+  x = Matrix{Float32}(undef, STATE_SIZE, batch_size)
+  y = Matrix{Float32}(undef, ACTION_SIZE, batch_size)
   for (iter, (state, action, reward, next_state, done)) in enumerate(minibatch)
     target = reward
 
     if !done
       a_max = Flux.argmax(model(next_state |> gpu))
-      target += γ * model_target(next_state |> gpu).data[a_max]
+      target += γ * model_target(next_state |> gpu)[a_max]
     end
 
-    target_f = model(state |> gpu).data
+    target_f = model(state |> gpu)
     target_f[action] = target
-    
+
     x[:, iter] .= state
     y[:, iter] .= target_f
   end
 
   x = x |> gpu
   y = y |> gpu
-  Flux.train!(huber_loss, [(x, y)], opt)
+  Flux.train!(huber_loss, params(model), [(x, y)], opt)
 
   if C == 0
     model_target = deepcopy(model)
   end
 
-  C = (C + 1) % UPDATE_FREQ  
+  C = (C + 1) % UPDATE_FREQ
   ϵ *= ϵ > ϵ_MIN ? ϵ_DECAY : 1.0f0
 end
 
@@ -108,8 +109,8 @@ end
 
 # ------------------------------ Training --------------------------------------
 
-e = 1
-scores = []
+global e = 1
+global scores = []
 while true
   reset!(env)
   total_reward = episode!(env, CartPolePolicy())
@@ -125,15 +126,15 @@ while true
   end
   println()
   replay()
-  e += 1
+  global e += 1
 end
 
 # -------------------------------- Testing -------------------------------------
-ee = 1
+global ee = 1
 
 while true
   reset!(env)
   total_reward = episode!(env, CartPolePolicy(false))
   println("Episode: $ee | Score: $total_reward")
-  ee += 1
+  global ee += 1
 end
