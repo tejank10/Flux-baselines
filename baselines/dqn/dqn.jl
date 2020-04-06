@@ -86,7 +86,7 @@ function replay()
   y = y |> gpu
 
   Flux.train!(loss, params(model), [(x, y)], opt)
-
+  
   ϵ *= ϵ > ϵ_MIN ? ϵ_DECAY : 1.0f0
 end
 
@@ -124,8 +124,7 @@ while true
   global e += 1
 end
 #---------------------------------- Saving -------------------------------------
-weights = Tracker.data.(params(model))
-@save "dqn-weights.bson" weights
+@save "../models/dqn-weights.bson" model
 # -------------------------------- Testing -------------------------------------
 global ee = 1
 
