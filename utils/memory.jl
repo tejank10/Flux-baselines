@@ -30,9 +30,9 @@ function store!(mem::Memory, transition)
 end
 
 function mem_sample(mem::Memory, n)
-  b_idx = Array{Int, 1}(n)
-  b_memory = Array{Float32, 2}(length(mem.tree.data[:, 1]), n)
-  ISWeights = Array{Float32, 1}(n)
+  b_idx = Array{Int, 1}(undef, n)
+  b_memory = Array{Float32, 2}(undef, length(mem.tree.data[:, 1]), n)
+  ISWeights = Array{Float32, 1}(undef, n)
 
   pri_seg = total_p(mem.tree) / n # priority segment
   mem.β = min(1., mem.β + mem.β_increment_per_sampling)  # max β = 1.0
@@ -51,11 +51,11 @@ function mem_sample(mem::Memory, n)
 end
 
 function batch_update!(mem::Memory, tree_idx, abs_errors)
-  abs_errors += mem.ϵ  # convert to abs and avoid 0
+  abs_errors = abs_errors .+ mem.ϵ  # convert to abs and avoid 0
   clipped_errors = min.(abs_errors, mem.abs_err_upper)
   ps = clipped_errors .^ mem.α
   for (ti, p) in zip(tree_idx, ps)
-    ti = convert(Int32, ti)
+    ti = convert(Int64, ti)
     update!(mem.tree, ti , p)
   end
 end

@@ -46,16 +46,16 @@ target_model = deepcopy(model)
 function loss(x, y, ISWeights)
   x, y, ISWeights
   sq_diff = (x .- y) .^ 2
-  reshaped_ISWeights = reshape(ISWeights, 1, length(ISWeights))
+  reshaped_ISWeights = reshape(ISWeights, 1, length(ISWeights)) |> gpu
   cost = mean(sq_diff .* reshaped_ISWeights)
   return cost
 end
 
 #Absolute Error (Used for SumTree)
-abs_errors(x, y) = sum(abs.(x - y), 1)
+abs_errors(x, y) = sum(abs.(x - y), dims=1)
 
 #Optimizer
-opt = ADAM(params(model), η)
+opt = ADAM(η)
 
 # ------------------------------------------------------------------------------
 
@@ -88,23 +88,21 @@ function replay()
 
   q_next, q_curr = target_model(next_states), model(states)
 
-  q_target = q_curr.data
+  q_target = q_curr
   eval_act_index = Int32.(batch_memory[STATE_SIZE + 1, :])
   reward = batch_memory[STATE_SIZE + 2, :]
 
   for i = 1:BATCH_SIZE
-    q_target[eval_act_index[i], i] = reward[i] + γ * maximum(q_next[:, i].data)
+    q_target[eval_act_index[i], i] = reward[i] + γ * maximum(q_next[:, i])
   end
 
   # Train
-  cost = loss(q_curr, q_target, ISWeights)
-  Flux.back!(cost)
-  opt()
+  Flux.train!(loss, params(model), [(q_curr, q_target, ISWeights)], opt)
 
   C = (C + 1) % UPDATE_FREQ
 
   # update priority
-  abs_error = abs_errors(q_curr, q_target).data
+  abs_error = abs_errors(q_curr, q_target)
   batch_update!(memory, tree_idx, abs_error)
 
   ϵ *= ϵ > ϵ_MIN ? ϵ_DECAY : 1.0f0
@@ -117,7 +115,7 @@ function episode!(env, π = RandomPolicy())
     #OpenAIGym.render(env)
     if π.train remember(s, a + 1, r, s′, env.done) end
   end
-  
+
   if frames >= MEM_SIZE
     replay()
   end
@@ -127,8 +125,8 @@ end
 
 # ------------------------------ Training --------------------------------------
 
-e = 1
-scores = []
+global e = 1
+global scores = []
 while true
   reset!(env)
   total_reward = episode!(env, CartPolePolicy())
@@ -143,15 +141,15 @@ while true
     end
   end
   println()
-  e += 1
+  global e += 1
 end
 
 # -------------------------------- Testing -------------------------------------
-ee = 1
+global ee = 1
 
 while true
   reset!(env)
   total_reward = episode!(env, CartPolePolicy(false))
   println("Episode: $ee | Score: $total_reward")
-  ee += 1
+  global ee += 1
 end
